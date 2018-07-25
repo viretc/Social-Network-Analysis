@@ -1,0 +1,376 @@
+---
+title: "Social Network Analysis"
+author: Alexandre Olivier - Cedric Viret
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r - libraries}
+options(warn=-1)
+library(igraph)
+library(data.table)
+library(dplyr)
+library(ggplot2)
+```
+
+
+## Loading data and basic description
+
+In this second assignment, we will use a new dataset, Twitter activity around a rumor. In particular, in your dataset, you will find RTs between users, in this format:
+
+- First column:  retweeting user
+- Second column: retweeted user
+- Third column: timestamp
+
+As we did in our first assignment you have to:
+
+- Load the dataset
+- Build the original graph object. Your resulting graph must be directed (and be careful with the direction during the rest of the assignment)
+- We are NOT going to simplify this graph 
+- We are NOT going to keep only the largest connected component
+
+After loading your data you have to describe your graph in a paragraph, mentioning how many nodes and edges it has, how many connected components and how they are (both weak and strong), and how the degree distribution is (is it power law?) for both, in and out degree. Additionally, compute the global clustering and reciprocity for this graph. Interpret your results.
+
+```{r - Graph creation}
+# reading file
+df = fread("higgs-activity_time_RTS.txt")
+str(df)
+# Creating graph
+g <- graph.data.frame(df,directed=TRUE)
+summary(g) # There are 256491 user(nodes) and 354930 retweets(edges) in this network
+
+
+```
+
+```{r - Connected Components}
+is.connected(g)
+# Getting all connected components and sorting by size
+ccs_g <- clusters(g)
+head(sort(table(ccs_g$membership), decreasing = T))
+
+# Number of conneced components
+length(ccs_g$csize)
+
+# plotting the distribution for the full graph
+#plot(1:length(ccs_g$csize),ccs_g$csize/sum(ccs_g$csize),ylim=c(0,1),type="h", main="Histogram of connected components for full graph")
+
+
+
+
+```
+
+```{r - Weak Connected Components}
+weak_cc = components(g, mode = "weak")
+head(sort(table(weak_cc$membership), decreasing = T))
+length(weak_cc$csize)
+#plot(1:length(weak_cc$csize),weak_cc$csize/sum(weak_cc$csize),ylim=c(0,1),type="h", main="Histogram of connected components for weak cc")
+```
+
+
+```{r - Strong Connected Components}
+strong_cc = components(g, mode = "strong")
+str(strong_cc)
+head(sort(table(strong_cc$membership), decreasing = T))
+length(strong_cc$csize)
+#plot(1:length(strong_cc$csize),strong_cc$csize/sum(strong_cc$csize),ylim=c(0,1),type="h", main="Histogram of connected components for weak cc")
+```
+
+
+
+```{r - Degree}
+# Getting degree from simplified graph
+degs <- degree(g)
+
+# Plotting distribution
+plot(density(degs), main = "Distribution of degree in simplified graph")
+plot(density(degs), log="xy", main = "Distribution of degree in simplified graph in log scale")
+
+power.law.fit(degs)
+```
+
+```{r - IDegree}
+# Getting degree from simplified graph
+in_degs <- degree(g, mode = "in")
+
+# Plotting distribution
+plot(density(in_degs), main = "Distribution of degree in simplified graph")
+plot(density(in_degs), log="xy", main = "Distribution of degree in simplified graph in log scale")
+
+power.law.fit(in_degs)
+```
+
+```{r - OutDegree}
+# Getting degree from simplified graph
+out_degs <- degree(g, mode = "out")
+
+# Plotting distribution
+plot(density(out_degs), main = "Distribution of degree in simplified graph")
+plot(density(out_degs), log="xy", main = "Distribution of degree in simplified graph in log scale")
+
+power.law.fit(out_degs)
+```
+
+
+```{r - Global clustering and reciprocity}
+
+trans_p = transitivity(g,  type="global") * 100 
+trans_p # Global clustering coeffificent: probability that the adjacent vertices of a vertex are connected
+
+reciprocity_p = reciprocity(g, ignore.loops = TRUE) * 100
+reciprocity_p # probability that the opposite counterpart of a directed edge is also included in the graph
+
+```
+
+INTERPRETATION:
+There is 256491 users (nodes) and 354930 retweets (edges) in this network.
+
+When we analyse the whole dataset, we have 13199 connected component and 6 types clusters with respectively: 223833 clusters of single node (1), 	one cluster of 69 nodes, one cluster of 49 nodes, one cluster of 29nodes, one cluster of 28 nodes, and one cluster of 25 nodes. The exact same results are observed for the weak connected components.
+
+For the strong connected component: there is 255002 connected component and 6 types clusters with respectively: one cluster with 984 nodes, 	one cluster of 32 nodes, one cluster of 17 nodes, one cluster of 14 nodes, one cluster of 11 nodes, and one cluster of 8 nodes.
+
+Our intuition is that there are more connected components for the "strong connected components" than for "weak" because strong connected components are strongly connected together - meaning that a lot of nodes have interaction with each other.
+
+For the inner degree: we have P values (0.46) > 0.05, so we cannot reject H0: follow a power law degree distribution. For the outer degree, it is the opposite, P values (0.04) < 0.05, so we reject H0 meaning that the degree distribution do NOT follow a power law.
+
+The transitivity ratio is of 0.032% meaning that only 0.32% of all the possible triangles are connected together. The reciprocity is of 47,7%, which demonstrate that this network is not a "one directional network" - lot of nodes have back and forth connection with each other.
+
+
+
+
+## Analyzing communities in a spreading network
+
+In this section, you have to compute communities using two algorithms:
+
+  - walktrap.community
+  - fastgreedy.community
+
+Simplify and consider your graph as undirected if it is needed to figure out communities.
+
+You have to make two visualizations of the network with the results provided by the algorithms. In order to compare both results, keep the same positions for the nodes in both visualizations. Use the _crossing_ function to force the visualization layout to place nodes in the same community together.
+
+```{r}
+
+g2 = as.undirected(simplify(g))
+
+# dirty trick
+degs = degree(g2)
+inodes = which(degs > 50)
+g3 = induced_subgraph(g2, vids=inodes)
+
+# Community
+comms = fastgreedy.community(g3)
+# other way
+comms2 = walktrap.community(g3)
+
+t_comms = table(comms$membership)
+t_comms2 = table(comms2$membership)
+
+# coloring  plus grouping nodes per community in viz
+# CROSSING: returns a logical vector, with one value for each edge, ordered according to the edge ids. The value is TRUE iff the edge connects two different communities, according to the (best) membership vector, as returned by membership().
+crosses = crossing(graph=g3, communities=comms) 
+crosses2 = crossing(graph=g3, communities=comms2) 
+
+E(g3)$weight = ifelse(crosses, 100, 1)
+
+# cmputing layout
+ll = layout.fruchterman.reingold(g3)
+colpal = sample(rainbow(max(comms$membership)))
+cols = colpal[comms$membership]
+
+png("tt_fast_greedy.png",width=800, height=800)
+  plot(x = comms, y = g3, edge.width = 1, vertex.size = 4, vertex.label = NA, mark.groups = NULL, layout = ll, col= cols,main = "Communities in retweet network - Fast greedy")
+dev.off()
+
+```
+
+```{r}
+colpal = sample(rainbow(max(comms2$membership)))
+cols = colpal[comms2$membership]
+
+png("tt_walktrap.png",width=800, height=800)
+  plot(x = comms2, y = g3, edge.width = 1, vertex.size = 4, vertex.label = NA, mark.groups = NULL, layout = ll, col= cols,main = "Communities in retweet network - walk trap")
+dev.off()
+
+
+```
+
+
+Compare also two metrics to check which algorithm provides the best result and discuss your choice:
+
+![Fast Greedy](C:/Users/viret/OneDrive/IE/Third_Term/SN/R/tt_fast_greedy.png)
+
+![Walk Tarp](C:/Users/viret/OneDrive/IE/Third_Term/SN/R/tt_walktrap.png)
+
+INTERPRETATION: When analysing the pictures produce with both metrics (fastgreedy and walktrap), the networks are almost identic, therefore we could go with either of them.
+
+However, if we were forced to choose between one or the other method, we would go for Walktrap method. Since it takes "random walks", I might give a better representation of the network because Fast greedy has a tendency to merge neighboring communities together if they are below a certain thresold. In Addition, it is more accurate that fast greedy (according to the origninal paper).
+
+source:https://stackoverflow.com/questions/9471906/what-are-the-differences-between-community-detection-algorithms-in-igraph
+
+Note: with the graphs we can visually see that the transitivity ratio is pretty low, since there are a lot of single nodes unconnected.
+
+
+
+  - Internal and external density (for this goal, again, check the function _crossing_ in Igraph)
+  - Modularity
+  
+```{r}
+
+# function to calculate internal density for each community
+int_den <- function(comm, g) {
+  # empty dataframe
+  int_den_df <- data.frame(community = numeric(), density = numeric(), members_num = numeric())
+  
+  for(i in 1:length(comm)) {
+    members <- comm$names[comm$membership == i]
+    total_possible_links <- length(members) * (length(members) - 1) / 2 #inclass formulas
+    total_actual_links <- ecount(induced_subgraph(g, members))
+    int_den_df <- rbind(int_den_df, data.frame(community = i, density = total_actual_links/total_possible_links, members_num = length(members)))
+  }
+  return(int_den_df)
+}
+
+# compute internal density of each community
+comm_fg_int_den <- int_den(comms, g3)
+comm_wt_int_den <- int_den(comms2,  g3)
+
+#print communitties by asceding order of density
+head(comm_fg_int_den[order(comm_fg_int_den$density),],10)
+head(comm_wt_int_den[order(comm_wt_int_den$density),],10)
+
+
+```
+
+```{r}
+# function to calculate external density for each community
+ext_den <- function(comm, g, cross) {
+  # empty dataframe
+  ext_den_df <- data.frame(community = numeric(), density = numeric(), members_num = numeric())
+  
+  for(i in 1:length(comm)) {
+    members <- comm$names[comm$membership == i]
+    ext_links <- length(E(g)[cross][from(members)])
+    
+    cluster_nodes <- vcount(induced_subgraph(g, members))
+    all_links <- (cluster_nodes * (vcount(g) - cluster_nodes))
+
+    ext_den_df <- rbind(ext_den_df, data.frame(community = i, density = ext_links/all_links, members_num = length(members)))
+  }
+  return(ext_den_df)
+}
+
+# compute external density of each community
+comm_fg_ext_den <- ext_den(comms, g3, crosses)
+comm_wt_ext_den <- ext_den(comms2, g3, crosses2)
+
+
+# order results by number of members and higher density community first
+head(arrange(comm_fg_ext_den, desc(members_num), desc(density)),10)
+head(arrange(comm_wt_ext_den, desc(members_num), desc(density)),10)
+
+# communities with at least 1 external connection
+dim(comm_fg_ext_den[comm_fg_ext_den$density != 0.0,])
+dim(comm_wt_ext_den[comm_wt_ext_den$density != 0.0,])
+```
+
+
+## Analyzing how the spreading works
+
+In this section, we have to describe how the spreading has evolved:
+
+- Plot a graph showing the number of infected nodes on time (an infected node is a node who has published content - it is in the graph but we see no retweets from him but people retweet his content - or a node who has retweeted a tweet). Describe what you see.
+
+```{r}
+#cummulative sum of infection over time (1 hour binning)
+
+df1 = df %>%
+  group_by(user1) %>%
+  summarize(min_ts = min(ts)) %>%
+  rename(user = user1)
+
+df2 = df %>%
+  group_by(user2) %>%
+  summarize(min_ts = min(ts)) %>%
+  rename(user = user2)
+
+users = rbind(df1,df2)
+
+users = users %>%
+  group_by(user) %>%
+  summarize(ts = min(min_ts))
+
+
+ggplot(users, aes(x=ts))+ geom_histogram() +
+    stat_bin(aes(y=..count..), breaks=seq(1341101181,1341705593,3600)) 
+
+
+ggplot(users, aes(x=ts))+ geom_histogram() +
+    stat_bin(aes(y=cumsum(..count..)), breaks=seq(1341101181,1341705593,3600)) 
+
+```
+
+INTERPRETATION:
+Looking at the first graph we can see that the distribution of the spreadness is not gaussian and it has a high pick around 1341400000 ts. Therefore, indicating that around that time, there is a lot of retweet.
+
+The second graph clearly reveals interesting facts: at the beginning the infection is minimal with a slow increase, then it suddenly increases rapidly (which also correspond to the highest point of the first graph) to finally stabilized at time 134160000 where the increase rate is marginal.
+
+
+- Compute the reproduction number (how many infected nodes on average appear from a previous infected node?). How this number evolve in time (for a given time, considering only past interactions)?
+
+```{r}
+
+users1 = users %>%
+  mutate(ts_cat = cut(ts, breaks = seq(1341101181,1341705593,3600), labels = c(1:167)))
+
+users1$ts_cat = as.numeric(users1$ts_cat)
+
+users1_t = as.data.frame(table(users1$ts_cat))
+
+users1_t$rep = 0
+for (i in c(1:167)){
+  users1_t[i+1,]$rep = users1_t[i+1,]$Freq/users1_t[i,]$Freq
+}
+
+plot(users1_t$rep, type="l", col="blue")
+
+#with cumulative appreance
+# temp = 0
+# users1_t$rep2 = 0
+# for (i in c(1:167)){
+#   temp = temp + users1_t[i,]$Freq
+#   users1_t[i+1,]$rep2 = users1_t[i+1,]$Freq/temp
+# }
+# 
+# plot(users1_t$rep2, type="l", col="blue")
+
+```
+
+INTERPRETATAION:
+At the beginning, the infected node variance is not stable with 3 high spikes with high degree (>3) to finally stabilized around 1 (after index 80). At the beginning, the infection (retweet) did propagated itself fast (another retweet) but shortly.
+
+However, the last spike last for long, meaning that the same among of retweet happened but for a longer period (snowball effect). After that, the infection is "stable" around 1 (excluding the outliers of index 150 and 160).
+
+
+- Visualize the longest cascade: considering links that infect new nodes (nodes that have not previously appeared in the spreading), create the subgraph and visualize it.
+
+```{r}
+# use simplified graph used before to find the longest cascade
+# find the longest distanced vertices from the simplifed graph
+longest_vertices <- farthest_vertices(g3)
+
+# get the shortest_path for the verticies find above
+shortest <- get.shortest.paths(g3, from = longest_vertices$vertices[1],
+                   to = longest_vertices$vertices[2])
+
+# induce subgraph of the longest cascade
+longest_cascade <- induced.subgraph(g3, shortest$vpath[[1]])
+
+# plot longest cascade
+plot(longest_cascade, edge.arrow.size = 0.5,
+     vertex.label.cex = 0.5, vertex.label.color = 'black', vertex.label.font = 2,
+     vertex.size = 20)
+```
+
